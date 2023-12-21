@@ -1,3 +1,3 @@
 # Classifier-Score-Distillation
 
-Comming soon!😄⭐
+(2023-12-21) Comming soon!😄⭐
