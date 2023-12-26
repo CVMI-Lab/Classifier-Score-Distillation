@@ -650,18 +650,3 @@ class SaverMixin:
         with open(save_path, "w") as f:
             f.write(json.dumps(payload))
         return save_path
-    
-    def apply_mask_on_white_background(self, comp_rgb, opacity):      
-        # 将掩码扩展为与 RGB 图像相同的形状
-        mask_expanded = opacity.unsqueeze(-1)
-        
-        # 定义白色背景
-        if torch.max(comp_rgb) <= 1.0:
-            white_background = torch.ones_like(comp_rgb)
-        else:
-            white_background = torch.ones_like(comp_rgb) * 255  # 255 是白色在 [0, 255] 范围内的值
-        
-        # 使用掩码合并图像和白色背景
-        output_img = comp_rgb * mask_expanded + white_background * (1 - mask_expanded)
-        
-        return output_img

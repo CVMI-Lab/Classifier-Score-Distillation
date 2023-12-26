@@ -36,6 +36,7 @@ class PBRMaterial(BaseMaterial):
         self.light = envlight.EnvLight(
             self.cfg.environment_texture, scale=self.cfg.environment_scale
         )
+
         FG_LUT = torch.from_numpy(
             np.fromfile("load/lights/bsdf_256_256.bin", dtype=np.float32).reshape(
                 1, 256, 256, 2
@@ -65,6 +66,7 @@ class PBRMaterial(BaseMaterial):
             material[..., 4:5] * (self.cfg.max_roughness - self.cfg.min_roughness)
             + self.cfg.min_roughness
         )
+
         if self.cfg.use_bump:
             assert tangent is not None
             # perturb_normal is a delta to the initialization [0, 0, 1]

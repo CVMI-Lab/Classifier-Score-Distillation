@@ -17,7 +17,6 @@ class ProlificDreamer(BaseLift3DSystem):
         # in ['coarse', 'geometry', 'texture']
         stage: str = "coarse"
         visualize_samples: bool = False
-        test_background_white: Optional[bool] = False
 
     cfg: Config
 
@@ -88,20 +87,9 @@ class ProlificDreamer(BaseLift3DSystem):
 
             # z variance loss proposed in HiFA: http://arxiv.org/abs/2305.18766
             # helps reduce floaters and produce solid geometry
-            if "z_variance" in out:
-                loss_z_variance = out["z_variance"][out["opacity"] > 0.5].mean()
-                self.log("train/loss_z_variance", loss_z_variance)
-                loss += loss_z_variance * self.C(self.cfg.loss.lambda_z_variance)
-
-            # sdf loss
-            if "sdf_grad" in out:
-                loss_eikonal = (
-                    (torch.linalg.norm(out["sdf_grad"], ord=2, dim=-1) - 1.0) ** 2
-                ).mean()
-                self.log("train/loss_eikonal", loss_eikonal)
-                loss += loss_eikonal * self.C(self.cfg.loss.lambda_eikonal)
-                self.log("train/inv_std", out["inv_std"], prog_bar=True)
-
+            loss_z_variance = out["z_variance"][out["opacity"] > 0.5].mean()
+            self.log("train/loss_z_variance", loss_z_variance)
+            loss += loss_z_variance * self.C(self.cfg.loss.lambda_z_variance)
         elif self.cfg.stage == "geometry":
             loss_normal_consistency = out["mesh"].normal_consistency()
             self.log("train/loss_normal_consistency", loss_normal_consistency)
@@ -188,21 +176,13 @@ class ProlificDreamer(BaseLift3DSystem):
 
     def test_step(self, batch, batch_idx):
         out = self(batch)
-        if self.cfg.test_background_white:
-            front_image = self.apply_mask_on_white_background(out["comp_rgb"][0], out["opacity"][0, :, :, 0])
-            if "comp_normal" in out:
-                front_normal = self.apply_mask_on_white_background(out["comp_normal"][0], out["opacity"][0, :, :, 0])
-        else:
-            front_image = out["comp_rgb"][0]
-            if "comp_normal" in out:
-                front_normal = out["comp_normal"][0]
         self.save_image_grid(
             f"it{self.true_global_step}-test/{batch['index'][0]}.png",
             (
                 [
                     {
                         "type": "rgb",
-                        "img": front_image, #out["comp_rgb"][0],
+                        "img": out["comp_rgb"][0],
                         "kwargs": {"data_format": "HWC"},
                     },
                 ]
@@ -213,7 +193,7 @@ class ProlificDreamer(BaseLift3DSystem):
                 [
                     {
                         "type": "rgb",
-                        "img": front_normal, #out["comp_normal"][0],
+                        "img": out["comp_normal"][0],
                         "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
                     }
                 ]

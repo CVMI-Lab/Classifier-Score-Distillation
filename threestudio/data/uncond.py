@@ -54,8 +54,6 @@ class RandomCameraDataModuleConfig:
     batch_uniform_azimuth: bool = True
     progressive_until: int = 0  # progressive ranges for elevation, azimuth, r, fovy
 
-    front_back_only_iters: int = 0
-
 
 class RandomCameraIterableDataset(IterableDataset, Updateable):
     def __init__(self, cfg: Any) -> None:
@@ -100,7 +98,6 @@ class RandomCameraIterableDataset(IterableDataset, Updateable):
         self.azimuth_range = self.cfg.azimuth_range
         self.camera_distance_range = self.cfg.camera_distance_range
         self.fovy_range = self.cfg.fovy_range
-        self.front_back_only = False
 
     def update_step(self, epoch: int, global_step: int, on_load_weights: bool = False):
         size_ind = bisect.bisect_right(self.resolution_milestones, global_step) - 1
@@ -113,11 +110,6 @@ class RandomCameraIterableDataset(IterableDataset, Updateable):
         )
         # progressive view
         self.progressive_view(global_step)
-
-        self.front_back_only = global_step < self.cfg.front_back_only_iters
-        
-        if self.front_back_only:
-            threestudio.debug('Only sample front and back views!')
 
     def __iter__(self):
         while True:
@@ -177,7 +169,6 @@ class RandomCameraIterableDataset(IterableDataset, Updateable):
         # sample azimuth angles from a uniform distribution bounded by azimuth_range
         azimuth_deg: Float[Tensor, "B"]
         if self.cfg.batch_uniform_azimuth:
-            assert not self.front_back_only
             # ensures sampled azimuth angles in a batch cover the whole range
             azimuth_deg = (
                 torch.rand(self.batch_size) + torch.arange(self.batch_size)
@@ -187,18 +178,12 @@ class RandomCameraIterableDataset(IterableDataset, Updateable):
                 0
             ]
         else:
-            if self.front_back_only:
-                is_front = (torch.rand(self.batch_size) > 0.5).float()
-                offset_deg = torch.rand(self.batch_size) * 60.0 - 30.0  # (-30, 30)
-                azimuth_deg = (0 + offset_deg) * is_front + (180 + offset_deg) * (1 - is_front)
-                azimuth_deg = (azimuth_deg % 360) - 180
-            else:
-                # simple random sampling
-                azimuth_deg = (
-                    torch.rand(self.batch_size)
-                    * (self.azimuth_range[1] - self.azimuth_range[0])
-                    + self.azimuth_range[0]
-                )
+            # simple random sampling
+            azimuth_deg = (
+                torch.rand(self.batch_size)
+                * (self.azimuth_range[1] - self.azimuth_range[0])
+                + self.azimuth_range[0]
+            )
         azimuth = azimuth_deg * math.pi / 180
 
         # sample distances from a uniform distribution bounded by distance_range
@@ -207,7 +192,7 @@ class RandomCameraIterableDataset(IterableDataset, Updateable):
             * (self.camera_distance_range[1] - self.camera_distance_range[0])
             + self.camera_distance_range[0]
         )
-        #print(azimuth)
+
         # convert spherical coordinates to cartesian coordinates
         # right hand coordinate system, x back, y right, z up
         # elevation in (-90, 90), azimuth from +x to +y in (-180, 180)
@@ -282,7 +267,7 @@ class RandomCameraIterableDataset(IterableDataset, Updateable):
             local_y = F.normalize(torch.cross(local_z, local_x, dim=-1), dim=-1)
             rot = torch.stack([local_x, local_y, local_z], dim=-1)
             light_azimuth = (
-                torch.rand(self.batch_size) * math.pi * 2 - math.pi
+                torch.rand(self.batch_size) * math.pi - 2 * math.pi
             )  # [-pi, pi]
             light_elevation = (
                 torch.rand(self.batch_size) * math.pi / 3 + math.pi / 6

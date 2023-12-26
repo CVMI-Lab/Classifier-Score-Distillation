@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
-import os
+
 import torch
 import torch.nn.functional as F
-import shutil
+
 import threestudio
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.utils.ops import binary_cross_entropy, dot
@@ -15,7 +15,6 @@ class Fantasia3D(BaseLift3DSystem):
     class Config(BaseLift3DSystem.Config):
         latent_steps: int = 1000
         texture: bool = False
-        test_background_white: Optional[bool] = False
 
     cfg: Config
 
@@ -25,7 +24,6 @@ class Fantasia3D(BaseLift3DSystem):
 
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         render_out = self.renderer(**batch, render_rgb=self.cfg.texture)
-        
         return {
             **render_out,
         }
@@ -70,18 +68,9 @@ class Fantasia3D(BaseLift3DSystem):
             )
         else:  # texture training
             guidance_inp = out["comp_rgb"]
-            if isinstance(
-                self.guidance,
-                threestudio.models.guidance.controlnet_guidance.ControlNetGuidance,
-            ):
-                cond_inp = out["comp_normal"]
-                guidance_out = self.guidance(
-                    guidance_inp, cond_inp, prompt_utils, **batch, rgb_as_latents=False
-                )
-            else:
-                guidance_out = self.guidance(
-                    guidance_inp, prompt_utils, **batch, rgb_as_latents=False
-                )
+            guidance_out = self.guidance(
+                guidance_inp, prompt_utils, **batch, rgb_as_latents=False
+            )
 
         for name, value in guidance_out.items():
             self.log(f"train/{name}", value)
@@ -96,90 +85,64 @@ class Fantasia3D(BaseLift3DSystem):
     def validation_step(self, batch, batch_idx):
         out = self(batch)
         self.save_image_grid(
-            f"it{self.true_global_step}-val/{batch['index'][0]}.png",
+            f"it{self.true_global_step}-{batch['index'][0]}.png",
             (
                 [
                     {
                         "type": "rgb",
-                        "img": batch["rgb"][0],
-                        "kwargs": {"data_format": "HWC"},
+                        "img": out["comp_rgb"][0],
+                        "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
                     }
                 ]
-                if "rgb" in batch
+                if self.cfg.texture
                 else []
             )
             + [
                 {
-                    "type": "rgb",
-                    "img": out["comp_rgb"][0],
-                    "kwargs": {"data_format": "HWC"},
+                    "type": "grayscale",
+                    "img": out["opacity"][0, :, :, 0],
+                    "kwargs": {"cmap": None, "data_range": (0, 1)},
                 },
-            ]
-            + (
-                [
-                    {
-                        "type": "rgb",
-                        "img": out["comp_normal"][0],
-                        "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
-                    }
-                ]
-                if "comp_normal" in out
-                else []
-            )
-            ,
-            # claforte: TODO: don't hardcode the frame numbers to record... read them from cfg instead.
-            name=f"validation_step_batchidx_{batch_idx}"
-            if batch_idx in [0, 7, 15, 23, 29]
-            else None,
+                {
+                    "type": "rgb",
+                    "img": out["comp_normal"][0],
+                    "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
+                },
+            ],
+            name="validation_step",
             step=self.true_global_step,
         )
 
     def on_validation_epoch_end(self):
-        filestem = f"it{self.true_global_step}-val"
-        self.save_img_sequence(
-            filestem,
-            filestem,
-            "(\d+)\.png",
-            save_format="mp4",
-            fps=30,
-            name="validation_epoch_end",
-            step=self.true_global_step,
-        )
-        shutil.rmtree(
-            os.path.join(self.get_save_dir(), f"it{self.true_global_step}-val")
-        )
+        pass
 
     def test_step(self, batch, batch_idx):
         out = self(batch)
-        if self.cfg.test_background_white:
-            front_image = self.apply_mask_on_white_background(out["comp_rgb"][0], out["opacity"][0, :, :, 0])
-            if "comp_normal" in out:
-                front_normal = self.apply_mask_on_white_background(out["comp_normal"][0], out["opacity"][0, :, :, 0])
-        else:
-            front_image = out["comp_rgb"][0]
-            if "comp_normal" in out:
-                front_normal = out["comp_normal"][0]
         self.save_image_grid(
             f"it{self.true_global_step}-test/{batch['index'][0]}.png",
-            [
-                {
-                    "type": "rgb",
-                    "img": front_image, #out["comp_rgb"][0],
-                    "kwargs": {"data_format": "HWC"},
-                },
-            ]
-            + (
+            (
                 [
                     {
                         "type": "rgb",
-                        "img": front_normal, #out["comp_normal"][0],
+                        "img": out["comp_rgb"][0],
                         "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
                     }
                 ]
-                if "comp_normal" in out
+                if self.cfg.texture
                 else []
             )
-            ,
+            + [
+                {
+                    "type": "grayscale",
+                    "img": out["opacity"][0, :, :, 0],
+                    "kwargs": {"cmap": None, "data_range": (0, 1)},
+                },
+                {
+                    "type": "rgb",
+                    "img": out["comp_normal"][0],
+                    "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
+                },
+            ],
             name="test_step",
             step=self.true_global_step,
         )

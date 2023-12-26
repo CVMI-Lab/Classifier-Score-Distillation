@@ -1,7 +1,10 @@
 from . import (
+    controlnet_guidance,
     deep_floyd_guidance,
+    instructpix2pix_guidance,
     stable_diffusion_guidance,
     stable_diffusion_vsd_guidance,
-    stable_diffusion_triple_guidance,
-    deep_floyd_simple_guidance,
+    zero123_guidance,
+    multiview_diffusion_guidance,
+    csd_multiview_diffusion_guidance,
 )

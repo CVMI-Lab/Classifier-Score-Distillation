@@ -1,5 +1,4 @@
 import os
-import shutil
 from dataclasses import dataclass, field
 
 import torch
@@ -16,9 +15,6 @@ class Magic3D(BaseLift3DSystem):
     @dataclass
     class Config(BaseLift3DSystem.Config):
         refinement: bool = False
-        train_vis_freq: Optional[int] = 1000
-        test_background_white: Optional[bool] = False
-        render_depth: Optional[bool] = False
 
     cfg: Config
 
@@ -27,7 +23,7 @@ class Magic3D(BaseLift3DSystem):
         super().configure()
 
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
-        render_out = self.renderer(render_depth=self.cfg.render_depth, **batch)
+        render_out = self.renderer(**batch)
         return {
             **render_out,
         }
@@ -42,8 +38,6 @@ class Magic3D(BaseLift3DSystem):
 
     def training_step(self, batch, batch_idx):
         out = self(batch)
-        batch['cond_rgb']=out.get('comp_normal', None)
-        batch['cond_depth']=out.get('depth', None)
         prompt_utils = self.prompt_processor()
         guidance_out = self.guidance(
             out["comp_rgb"], prompt_utils, **batch, rgb_as_latents=False
@@ -86,51 +80,17 @@ class Magic3D(BaseLift3DSystem):
 
         for name, value in self.cfg.loss.items():
             self.log(f"train_params/{name}", self.C(value))
-        
-        if (
-            self.cfg.train_vis_freq is not None
-            and self.true_global_step % self.cfg.train_vis_freq == 0
-        ):
-            self.save_image_grid(
-                f"it{self.true_global_step}-train.png",
-                [
-                    {
-                        "type": "rgb",
-                        "img": out["comp_rgb"][0],
-                        "kwargs": {"data_format": "HWC"},
-                    },
-                ],
-            )
 
         return {"loss": loss}
 
     def validation_step(self, batch, batch_idx):
         out = self(batch)
-        if self.cfg.test_background_white:
-            front_image = self.apply_mask_on_white_background(out["comp_rgb"][0], out["opacity"][0, :, :, 0])
-            if "comp_normal" in out:
-                front_normal = self.apply_mask_on_white_background(out["comp_normal"][0], out["opacity"][0, :, :, 0])
-        else:
-            front_image = out["comp_rgb"][0]
-            if "comp_normal" in out:
-                front_normal = out["comp_normal"][0]
         self.save_image_grid(
-            f"it{self.true_global_step}-val/{batch['index'][0]}.png",
-            (
-                [
-                    {
-                        "type": "rgb",
-                        "img": batch["rgb"][0],
-                        "kwargs": {"data_format": "HWC"},
-                    }
-                ]
-                if "rgb" in batch
-                else []
-            )
-            + [
+            f"it{self.true_global_step}-{batch['index'][0]}.png",
+            [
                 {
                     "type": "rgb",
-                    "img": front_image, #out["comp_rgb"][0],
+                    "img": out["comp_rgb"][0],
                     "kwargs": {"data_format": "HWC"},
                 },
             ]
@@ -138,52 +98,35 @@ class Magic3D(BaseLift3DSystem):
                 [
                     {
                         "type": "rgb",
-                        "img": front_normal, #out["comp_normal"][0],
+                        "img": out["comp_normal"][0],
                         "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
                     }
                 ]
                 if "comp_normal" in out
                 else []
             )
-            ,
-            # claforte: TODO: don't hardcode the frame numbers to record... read them from cfg instead.
-            name=f"validation_step_batchidx_{batch_idx}"
-            if batch_idx in [0, 7, 15, 23, 29]
-            else None,
+            + [
+                {
+                    "type": "grayscale",
+                    "img": out["opacity"][0, :, :, 0],
+                    "kwargs": {"cmap": None, "data_range": (0, 1)},
+                },
+            ],
+            name="validation_step",
             step=self.true_global_step,
         )
 
     def on_validation_epoch_end(self):
-        filestem = f"it{self.true_global_step}-val"
-        self.save_img_sequence(
-            filestem,
-            filestem,
-            "(\d+)\.png",
-            save_format="mp4",
-            fps=30,
-            name="validation_epoch_end",
-            step=self.true_global_step,
-        )
-        shutil.rmtree(
-            os.path.join(self.get_save_dir(), f"it{self.true_global_step}-val")
-        )
+        pass
 
     def test_step(self, batch, batch_idx):
         out = self(batch)
-        if self.cfg.test_background_white:
-            front_image = self.apply_mask_on_white_background(out["comp_rgb"][0], out["opacity"][0, :, :, 0])
-            if "comp_normal" in out:
-                front_normal = self.apply_mask_on_white_background(out["comp_normal"][0], out["opacity"][0, :, :, 0])
-        else:
-            front_image = out["comp_rgb"][0]
-            if "comp_normal" in out:
-                front_normal = out["comp_normal"][0]
         self.save_image_grid(
             f"it{self.true_global_step}-test/{batch['index'][0]}.png",
             [
                 {
                     "type": "rgb",
-                    "img": front_image, #out["comp_rgb"][0],
+                    "img": out["comp_rgb"][0],
                     "kwargs": {"data_format": "HWC"},
                 },
             ]
@@ -191,14 +134,20 @@ class Magic3D(BaseLift3DSystem):
                 [
                     {
                         "type": "rgb",
-                        "img": front_normal, #out["comp_normal"][0],
+                        "img": out["comp_normal"][0],
                         "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
                     }
                 ]
                 if "comp_normal" in out
                 else []
             )
-            ,
+            + [
+                {
+                    "type": "grayscale",
+                    "img": out["opacity"][0, :, :, 0],
+                    "kwargs": {"cmap": None, "data_range": (0, 1)},
+                },
+            ],
             name="test_step",
             step=self.true_global_step,
         )

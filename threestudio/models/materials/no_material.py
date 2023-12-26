@@ -20,12 +20,10 @@ class NoMaterial(BaseMaterial):
         color_activation: str = "sigmoid"
         input_feature_dims: Optional[int] = None
         mlp_network_config: Optional[dict] = None
-        requires_normal: bool = False
 
     cfg: Config
 
     def configure(self) -> None:
-        self.requires_tangent = False
         self.use_network = False
         if (
             self.cfg.input_feature_dims is not None
@@ -37,7 +35,6 @@ class NoMaterial(BaseMaterial):
                 self.cfg.mlp_network_config,
             )
             self.use_network = True
-        self.requires_normal = self.cfg.requires_normal
 
     def forward(
         self, features: Float[Tensor, "B ... Nf"], **kwargs

@@ -38,7 +38,6 @@ class DirectionConfig:
 class PromptProcessorOutput:
     text_embeddings: Float[Tensor, "N Nf"]
     uncond_text_embeddings: Float[Tensor, "N Nf"]
-    null_text_embeddings: Float[Tensor, "N Nf"]
     text_embeddings_vd: Float[Tensor, "Nv N Nf"]
     uncond_text_embeddings_vd: Float[Tensor, "Nv N Nf"]
     directions: List[DirectionConfig]
@@ -55,7 +54,6 @@ class PromptProcessorOutput:
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
         view_dependent_prompting: bool = True,
-        return_null_text_embeddings: bool = False,
     ) -> Float[Tensor, "BB N Nf"]:
         batch_size = elevation.shape[0]
 
@@ -76,15 +74,8 @@ class PromptProcessorOutput:
                 batch_size, -1, -1
             )
 
-        null_text_embeddings = self.null_text_embeddings.expand(batch_size, -1, -1)  # type: ignore
-
         # IMPORTANT: we return (cond, uncond), which is in different order than other implementations!
-        if return_null_text_embeddings:
-            return torch.cat(
-                [text_embeddings, uncond_text_embeddings, null_text_embeddings], dim=0
-            )
-        else:
-            return torch.cat([text_embeddings, uncond_text_embeddings], dim=0)
+        return torch.cat([text_embeddings, uncond_text_embeddings], dim=0)
 
     def get_text_embeddings_perp_neg(
         self,
@@ -92,7 +83,6 @@ class PromptProcessorOutput:
         azimuth: Float[Tensor, "B"],
         camera_distances: Float[Tensor, "B"],
         view_dependent_prompting: bool = True,
-        return_null_text_embeddings: bool = False,
     ) -> Tuple[Float[Tensor, "BBBB N Nf"], Float[Tensor, "B 2"]]:
         assert (
             view_dependent_prompting
@@ -160,25 +150,15 @@ class PromptProcessorOutput:
                         -shifted_expotional_decay(*self.perp_neg_f_sb, r_inter),
                         -shifted_expotional_decay(*self.perp_neg_f_fsb, r_inter),
                     ]
-        if return_null_text_embeddings:
-            text_embeddings = torch.cat(
-                [
-                    torch.stack(pos_text_embeddings, dim=0),
-                    torch.stack(uncond_text_embeddings, dim=0),
-                    torch.stack(neg_text_embeddings, dim=0),
-                    self.null_text_embeddings.expand(batch_size, -1, -1),
-                ],
-                dim=0,
-            )
-        else:
-            text_embeddings = torch.cat(
-                [
-                    torch.stack(pos_text_embeddings, dim=0),
-                    torch.stack(uncond_text_embeddings, dim=0),
-                    torch.stack(neg_text_embeddings, dim=0),
-                ],
-                dim=0,
-            )
+
+        text_embeddings = torch.cat(
+            [
+                torch.stack(pos_text_embeddings, dim=0),
+                torch.stack(uncond_text_embeddings, dim=0),
+                torch.stack(neg_text_embeddings, dim=0),
+            ],
+            dim=0,
+        )
 
         return text_embeddings, torch.as_tensor(
             neg_guidance_weights, device=elevation.device
@@ -196,13 +176,11 @@ class PromptProcessor(BaseObject):
         prompt: str = "a hamburger"
 
         # manually assigned view-dependent prompts
-        prompt_front: Optional[str] = None
         prompt_side: Optional[str] = None
         prompt_back: Optional[str] = None
         prompt_overhead: Optional[str] = None
 
         negative_prompt: str = ""
-        use_view_dependent_negative_prompt: bool = False
         pretrained_model_name_or_path: str = "runwayml/stable-diffusion-v1-5"
         overhead_threshold: float = 60.0
         front_threshold: float = 45.0
@@ -250,17 +228,13 @@ class PromptProcessor(BaseObject):
                 DirectionConfig(
                     "side",
                     lambda s: f"side view of {s}",
-                    lambda s: f"{s}, front view, back view, overhead view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: torch.ones_like(ele, dtype=torch.bool),
                 ),
                 DirectionConfig(
                     "front",
                     lambda s: f"front view of {s}",
-                    lambda s: f"{s}, side view, back view, overhead view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: (
                         shift_azimuth_deg(azi) > -self.cfg.front_threshold
                     )
@@ -269,9 +243,7 @@ class PromptProcessor(BaseObject):
                 DirectionConfig(
                     "back",
                     lambda s: f"backside view of {s}",
-                    lambda s: f"{s}, front view, side view, overhead view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: (
                         shift_azimuth_deg(azi) > 180 - self.cfg.back_threshold
                     )
@@ -280,9 +252,7 @@ class PromptProcessor(BaseObject):
                 DirectionConfig(
                     "overhead",
                     lambda s: f"overhead view of {s}",
-                    lambda s: f"{s}, front view, back view, side view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: ele > self.cfg.overhead_threshold,
                 ),
             ]
@@ -291,17 +261,13 @@ class PromptProcessor(BaseObject):
                 DirectionConfig(
                     "side",
                     lambda s: f"{s}, side view",
-                    lambda s: f"{s}, front view, back view, overhead view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: torch.ones_like(ele, dtype=torch.bool),
                 ),
                 DirectionConfig(
                     "front",
                     lambda s: f"{s}, front view",
-                    lambda s: f"{s}, side view, back view, overhead view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: (
                         shift_azimuth_deg(azi) > -self.cfg.front_threshold
                     )
@@ -310,9 +276,7 @@ class PromptProcessor(BaseObject):
                 DirectionConfig(
                     "back",
                     lambda s: f"{s}, back view",
-                    lambda s: f"{s}, front view, side view, overhead view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: (
                         shift_azimuth_deg(azi) > 180 - self.cfg.back_threshold
                     )
@@ -321,9 +285,7 @@ class PromptProcessor(BaseObject):
                 DirectionConfig(
                     "overhead",
                     lambda s: f"{s}, overhead view",
-                    lambda s: f"{s}, front view, back view, side view"
-                    if self.cfg.use_view_dependent_negative_prompt
-                    else s,
+                    lambda s: s,
                     lambda ele, azi, dis: ele > self.cfg.overhead_threshold,
                 ),
             ]
@@ -354,7 +316,7 @@ class PromptProcessor(BaseObject):
             ]
         else:
             self.prompts_vd = [
-                self.cfg.get(f"prompt_{d.name}", None) or d.prompt(self.prompt)  # type: ignore
+                d.prompt(self.cfg.get(f"prompt_{d.name}", None) or self.prompt)  # type: ignore
                 for d in self.directions
             ]
 
@@ -386,7 +348,6 @@ class PromptProcessor(BaseObject):
             + [self.negative_prompt]
             + self.prompts_vd
             + self.negative_prompts_vd
-            + [""]  # null text
         )
         prompts_to_process = []
         for prompt in all_prompts:
@@ -438,7 +399,6 @@ class PromptProcessor(BaseObject):
         self.uncond_text_embeddings_vd = torch.stack(
             [self.load_from_cache(prompt) for prompt in self.negative_prompts_vd], dim=0
         )
-        self.null_text_embeddings = self.load_from_cache("")[None, ...]
         threestudio.debug(f"Loaded text embeddings.")
 
     def load_from_cache(self, prompt):
@@ -542,7 +502,6 @@ class PromptProcessor(BaseObject):
         return PromptProcessorOutput(
             text_embeddings=self.text_embeddings,
             uncond_text_embeddings=self.uncond_text_embeddings,
-            null_text_embeddings=self.null_text_embeddings,
             text_embeddings_vd=self.text_embeddings_vd,
             uncond_text_embeddings_vd=self.uncond_text_embeddings_vd,
             directions=self.directions,

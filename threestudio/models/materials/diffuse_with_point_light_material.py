@@ -22,15 +22,11 @@ class DiffuseWithPointLightMaterial(BaseMaterial):
         textureless_prob: float = 0.5
         albedo_activation: str = "sigmoid"
         soft_shading: bool = False
-        eval_show_albedo: bool = False
-        textureless_normal: bool = False
-        no_material_color: Optional[bool] = False
 
     cfg: Config
 
     def configure(self) -> None:
         self.requires_normal = True
-        self.requires_tangent = False
 
         self.ambient_light_color: Float[Tensor, "3"]
         self.register_buffer(
@@ -83,10 +79,7 @@ class DiffuseWithPointLightMaterial(BaseMaterial):
         )
         textureless_color = diffuse_light + ambient_light_color
         # clamp albedo to [0, 1] to compute shading
-        if self.cfg.no_material_color:
-            color = albedo
-        else:
-            color = albedo.clamp(0.0, 1.0) * textureless_color
+        color = albedo.clamp(0.0, 1.0) * textureless_color
 
         if shading is None:
             if self.training:
@@ -102,16 +95,13 @@ class DiffuseWithPointLightMaterial(BaseMaterial):
                     shading = "albedo"
                 else:
                     # return shaded color by default in evaluation
-                    shading = "albedo" if self.cfg.eval_show_albedo else "diffuse"
+                    shading = "diffuse"
 
         # multiply by 0 to prevent checking for unused parameters in DDP
         if shading == "albedo":
             return albedo + textureless_color * 0
         elif shading == "textureless":
-            if self.cfg.textureless_normal:
-                return albedo * 0 + (shading_normal * 0.5 + 0.5)
-            else:
-                return albedo * 0 + textureless_color
+            return albedo * 0 + textureless_color
         elif shading == "diffuse":
             return color
         else:
